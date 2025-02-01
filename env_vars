@@ -1,0 +1,4 @@
+export CLARIFAI_USER_ID="clarifai"
+export CLARIFAI_APP_ID="Streaming_module_inwork"
+export CLARIFAI_PAT="dad9f578af264a20851ff34eb1905774"
+export CLARIFAI_API_BASE="https://api.clarifai.com"

@@ -1,0 +1,12 @@
+Changelog:
+- update streamlit to >= 1.36.0 (introduced pages)
+- attempting to swap out "pages" directory implemtation with more direct st.page() version
+- secrets.toml messed up my `source env_vars` method of developing, which I think is better
+	- removed secrets.toml
+	- TODO - write instructions on setting up dev env for pre-deployment development (ie. use pass credentials to module via `env_vars`)
+
+
+TODO: (items should reflect above as well)
+- write instructions on setting up dev env for pre-deployment development (ie. use pass credentials to module via `env_vars`)
+- explore different user journeys during basic examples
+	- ListInputs, if no inputs > upload inputs, then do some other thing
