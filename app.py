@@ -13,6 +13,10 @@ from clarifai.modules.css import ClarifaiStreamlitCSS
 from clarifai_grpc.grpc.api.status import status_code_pb2
 import threading
 
+# load .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Streamlit Config
 st.set_page_config(layout="wide")
 ClarifaiStreamlitCSS.insert_default_css(st)
