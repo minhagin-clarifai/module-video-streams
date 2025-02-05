@@ -38,7 +38,7 @@ per_page = 25
 page_of_inputs = list(input_obj.list_inputs(page_no=page_no, per_page=per_page))
 
 available_models = [
-    {"Name": "[CO] ResNetModel", "URL": "https://clarifai.com/clarifai/Streaming_module_inwork/models/detr-resnet-image-detection"},
+    {"Name": "[CO] ResNetModel", "URL": "https://clarifai.com/clarifai/open-world/models/detr-resnet-50"},
     #{"Name": "General-Image-Detection", "URL": "https://clarifai.com/clarifai/main/models/general-image-detection"},
     #{"Name": "Face Detection", "URL": "https://clarifai.com/clarifai/main/models/face-detection"},
     #{"Name": "Vehicle Detection", "URL": "https://clarifai.com/clarifai/main/models/vehicle-detector-alpha-x"},
