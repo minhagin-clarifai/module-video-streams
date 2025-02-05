@@ -4,6 +4,7 @@ import numpy as np
 import asyncio
 import threading
 from io import BytesIO
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from clarifai.client.auth.helper import ClarifaiAuthHelper
 from clarifai.client.user import User
@@ -11,6 +12,7 @@ from clarifai.client.model import Model
 from clarifai.client.input import Inputs
 from clarifai.modules.css import ClarifaiStreamlitCSS
 from dotenv import load_dotenv
+from typing import List, Iterator, Tuple
 
 load_dotenv()
 
@@ -36,9 +38,10 @@ per_page = 25
 page_of_inputs = list(input_obj.list_inputs(page_no=page_no, per_page=per_page))
 
 available_models = [
-    {"Name": "General-Image-Detection", "URL": "https://clarifai.com/clarifai/main/models/general-image-detection"},
-    {"Name": "Face Detection", "URL": "https://clarifai.com/clarifai/main/models/face-detection"},
-    {"Name": "Vehicle Detection", "URL": "https://clarifai.com/clarifai/main/models/vehicle-detector-alpha-x"},
+    {"Name": "[CO] ResNetModel", "URL": "https://clarifai.com/clarifai/Streaming_module_inwork/models/detr-resnet-image-detection"},
+    #{"Name": "General-Image-Detection", "URL": "https://clarifai.com/clarifai/main/models/general-image-detection"},
+    #{"Name": "Face Detection", "URL": "https://clarifai.com/clarifai/main/models/face-detection"},
+    #{"Name": "Vehicle Detection", "URL": "https://clarifai.com/clarifai/main/models/vehicle-detector-alpha-x"},
 ]
 
 selected_model_name = st.selectbox("Select a Model", [m["Name"] for m in available_models])
@@ -88,44 +91,47 @@ class AsyncVideoProcessor:
         self.detector_model = Model(url=self.model_url, pat=self.pat)
         self.cap = cv2.VideoCapture(self.video_url)
         self.detections = {}
+        self.frame_queue = deque(maxlen=80)  
         self.lock = threading.Lock()
         self.executor = ThreadPoolExecutor(max_workers=4)
 
     def draw_detections(self, frame, frame_index):
         with self.lock:
-            if frame_index in self.detections:
-                detections = self.detections[frame_index]
-            else:
-                previous_frame = max([f for f in self.detections.keys() if f < frame_index], default=None)
-                detections = self.detections.get(previous_frame, [])
-            for item in detections:
-                x1, y1, x2, y2, conc, value = item
+            detections = self.detections.get(frame_index, [])
+            for x1, y1, x2, y2, conc, value in detections:
                 cv2.putText(frame, f"{conc} ({value:.2f})", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         return frame
 
-    def send_for_inference(self, frame, frame_index):
-        frame_bytes = cv2.imencode('.jpg', frame)[1].tobytes()
-        proto_input = Inputs.get_input_from_bytes(input_id=f'frame_{frame_index}', image_bytes=frame_bytes)
+    def process_stream_batch(self):
+        with self.lock:
+            if not self.frame_queue:
+                return
+            batch = list(self.frame_queue)
+            self.frame_queue.clear()
+        proto_inputs = [
+            Inputs.get_input_from_bytes(input_id=f'frame_{idx}', image_bytes=frame_bytes)
+            for idx, (frame_bytes, frame_shape) in batch
+        ]
         try:
-            prediction = self.detector_model.predict([proto_input])
-            output = prediction.outputs[0]
-            print(f"Frame {frame_index}: {output.status.description}")
-            detections = []
-            for region in output.data.regions:
-                for concept in region.data.concepts:
-                    conc = concept.name
-                    value = concept.value
-                bbox = region.region_info.bounding_box
-                x1 = max(0, min(int(bbox.left_col * frame.shape[1]), frame.shape[1]))
-                y1 = max(0, min(int(bbox.top_row * frame.shape[0]), frame.shape[0]))
-                x2 = max(0, min(int(bbox.right_col * frame.shape[1]), frame.shape[1]))
-                y2 = max(0, min(int(bbox.bottom_row * frame.shape[0]), frame.shape[0]))
-                detections.append((x1, y1, x2, y2, conc, value))
-            with self.lock:
-                self.detections[frame_index] = detections
+            responses = self.detector_model.stream(iter([proto_inputs]))
+            for idx, response in enumerate(responses):
+                detections = []
+                frame_shape = batch[idx][1] 
+                for region in response.outputs[0].data.regions:
+                    for concept in region.data.concepts:
+                        conc = concept.name
+                        value = concept.value
+                    bbox = region.region_info.bounding_box
+                    x1 = max(0, min(int(bbox.left_col * frame_shape[1]), frame_shape[1]))
+                    y1 = max(0, min(int(bbox.top_row * frame_shape[0]), frame_shape[0]))
+                    x2 = max(0, min(int(bbox.right_col * frame_shape[1]), frame_shape[1]))
+                    y2 = max(0, min(int(bbox.bottom_row * frame_shape[0]), frame_shape[0]))
+                    detections.append((x1, y1, x2, y2, conc, value))
+                with self.lock:
+                    self.detections[batch[idx][0]] = detections
         except Exception as e:
-            print(f"Error in inference: {e}")
+            print(f"Error in streaming inference: {e}")
 
     async def stream_video(self, frame_placeholder):
         frame_idx = 0
@@ -134,8 +140,11 @@ class AsyncVideoProcessor:
             ret, frame = self.cap.read()
             if not ret:
                 break
-            if frame_idx % int(input_fps) == 0:
-                self.executor.submit(self.send_for_inference, frame.copy(), frame_idx)
+            frame_bytes = cv2.imencode('.jpg', frame)[1].tobytes()
+            with self.lock:
+                self.frame_queue.append((frame_idx, (frame_bytes, frame.shape)))
+            if len(self.frame_queue) >= 8:
+                self.executor.submit(self.process_stream_batch)
             frame = self.draw_detections(frame, frame_idx)
             _, buffer = cv2.imencode('.jpg', frame)
             img_bytes = BytesIO(buffer.tobytes())
@@ -149,10 +158,3 @@ if st.session_state.selected_video and st.session_state.selected_model:
     processor = AsyncVideoProcessor(st.session_state.selected_model, st.session_state.selected_video, pat)
     frame_placeholder = st.empty()
     asyncio.run(processor.stream_video(frame_placeholder))
-
-
-
-
-
-
-        
